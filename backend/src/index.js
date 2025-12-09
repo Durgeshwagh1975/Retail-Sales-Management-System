@@ -30,9 +30,7 @@ const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
 
-// IMPORTANT: adjust this path if your db.js is elsewhere.
-// From backend/src/index.js → ../db.js at backend/db.js
-const db = require("../db");
+const db = require("./db"); // ✅ db.js is in the SAME folder as index.js
 
 const salesRoutes = require("./routes/salesRoutes");
 const metaRoutes = require("./routes/metaRoutes");
@@ -43,9 +41,8 @@ app.use(cors());
 app.use(express.json());
 
 /**
- * Initialize SQLite database schema from db_init.sql.
- * This runs on every server start.
- * On Render, it creates the sales table in a new/empty DB.
+ * Initialize SQLite schema from db_init.sql
+ * Runs at server startup (idempotent thanks to IF NOT EXISTS).
  */
 function initDatabase() {
   const initFilePath = path.join(__dirname, "..", "db_init.sql");
@@ -68,10 +65,10 @@ function initDatabase() {
   });
 }
 
-// 👉 Run DB initialization BEFORE starting the server
+// Run DB initialization BEFORE routes
 initDatabase();
 
-// Routes (unchanged logic)
+// Routes (logic unchanged)
 app.use("/api/sales", salesRoutes);
 app.use("/api/meta", metaRoutes);
 

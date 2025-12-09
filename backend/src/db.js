@@ -17,19 +17,19 @@ const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 const fs = require("fs");
 
-// Are we running on Render?
-// Render always sets process.env.RENDER = "true"
+// Detect Render environment (Render sets process.env.RENDER = "true")
 const runningOnRender = !!process.env.RENDER;
 
-// Local dev DB (your existing file)
+// Local dev DB file (inside backend/data)
 const localDbPath = path.join(__dirname, "..", "data", "truestate.sqlite");
 
-// On Render, use a DB file in /tmp (always writable)
+// On Render, use a writable temporary file
 const renderDbPath = "/tmp/truestate.sqlite";
 
+// Choose path based on environment
 const dbPath = runningOnRender ? renderDbPath : localDbPath;
 
-// Make sure the directory exists (for local path)
+// Ensure directory exists
 const dir = path.dirname(dbPath);
 if (!fs.existsSync(dir)) {
   fs.mkdirSync(dir, { recursive: true });
@@ -37,7 +37,7 @@ if (!fs.existsSync(dir)) {
 
 console.log("Using SQLite DB at:", dbPath);
 
-// Open DB explicitly in READWRITE + CREATE mode
+// Open DB (create if missing)
 const db = new sqlite3.Database(
   dbPath,
   sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE,
