@@ -1,3 +1,4 @@
+-- backend/db_init.sql
 CREATE TABLE IF NOT EXISTS sales (
   transaction_id TEXT,
   date TEXT,
