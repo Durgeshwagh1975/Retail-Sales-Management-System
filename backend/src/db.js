@@ -20,16 +20,35 @@ const fs = require("fs");
 // Detect Render environment (Render sets process.env.RENDER = "true")
 const runningOnRender = !!process.env.RENDER;
 
-// Local dev DB file (inside backend/data)
-const localDbPath = path.join(__dirname, "..", "data", "truestate.sqlite");
+// Path to the DB file in your repo (with data)
+// backend/src -> .. -> backend/data/truestate.sqlite
+const templateDbPath = path.join(__dirname, "..", "data", "truestate.sqlite");
 
-// On Render, use a writable temporary file
-const renderDbPath = "/tmp/truestate.sqlite";
+// Path to the actual DB file used at runtime
+// On Render we use /tmp (writable), locally we just use the template file
+let dbPath;
 
-// Choose path based on environment
-const dbPath = runningOnRender ? renderDbPath : localDbPath;
+if (runningOnRender) {
+  const tmpDbPath = "/tmp/truestate.sqlite";
 
-// Ensure directory exists
+  try {
+    // If /tmp DB doesn't exist yet but the template does, copy it
+    if (fs.existsSync(templateDbPath) && !fs.existsSync(tmpDbPath)) {
+      console.log("Copying template DB to /tmp...");
+      fs.copyFileSync(templateDbPath, tmpDbPath);
+      console.log("✅ Copied template DB to:", tmpDbPath);
+    }
+  } catch (err) {
+    console.error("❌ Error copying template DB to /tmp:", err);
+  }
+
+  dbPath = tmpDbPath;
+} else {
+  // Local development: use the DB file in backend/data directly
+  dbPath = templateDbPath;
+}
+
+// Ensure directory exists (mainly for local dev)
 const dir = path.dirname(dbPath);
 if (!fs.existsSync(dir)) {
   fs.mkdirSync(dir, { recursive: true });
