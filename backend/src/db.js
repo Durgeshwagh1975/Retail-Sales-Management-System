@@ -1,95 +1,88 @@
-// // backend/src/db.js
-// const sqlite3 = require("sqlite3").verbose();
-// const path = require("path");
-
-// const dbPath =
-//   process.env.DB_PATH || path.join(__dirname, "..", "data", "truestate.sqlite");
-
-// console.log("Using SQLite DB at:", dbPath);
-
-// const db = new sqlite3.Database(dbPath);
-
-// module.exports = db;
-
-
-// // backend/src/db.js
-// const sqlite3 = require("sqlite3").verbose();
-// const path = require("path");
-// const fs = require("fs");
-
-// // Detect Render environment (Render sets process.env.RENDER = "true")
-// const runningOnRender = !!process.env.RENDER;
-
-// // Path to the DB file in your repo (with data)
-// // backend/src -> .. -> backend/data/truestate.sqlite
-// const templateDbPath = path.join(__dirname, "..", "data", "truestate.sqlite");
-
-// // Path to the actual DB file used at runtime
-// // On Render we use /tmp (writable), locally we just use the template file
-// let dbPath;
-
-// if (runningOnRender) {
-//   const tmpDbPath = "/tmp/truestate.sqlite";
-
-//   try {
-//     // If /tmp DB doesn't exist yet but the template does, copy it
-//     if (fs.existsSync(templateDbPath) && !fs.existsSync(tmpDbPath)) {
-//       console.log("Copying template DB to /tmp...");
-//       fs.copyFileSync(templateDbPath, tmpDbPath);
-//       console.log("✅ Copied template DB to:", tmpDbPath);
-//     }
-//   } catch (err) {
-//     console.error("❌ Error copying template DB to /tmp:", err);
-//   }
-
-//   dbPath = tmpDbPath;
-// } else {
-//   // Local development: use the DB file in backend/data directly
-//   dbPath = templateDbPath;
-// }
-
-// // Ensure directory exists (mainly for local dev)
-// const dir = path.dirname(dbPath);
-// if (!fs.existsSync(dir)) {
-//   fs.mkdirSync(dir, { recursive: true });
-// }
-
-// console.log("Using SQLite DB at:", dbPath);
-
-// // Open DB (create if missing)
-// const db = new sqlite3.Database(
-//   dbPath,
-//   sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE,
-//   (err) => {
-//     if (err) {
-//       console.error("❌ Failed to open SQLite DB:", err);
-//     } else {
-//       console.log("✅ SQLite DB opened successfully");
-//     }
-//   }
-// );
-
-// module.exports = db;
+// 
 
 
 // backend/src/db.js
+// Robust PG pool with keepAlive, nicer logging and one-retry on transient errors.
+
 const { Pool } = require("pg");
 
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  console.error("❌ DATABASE_URL is not set");
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("❌ DATABASE_URL missing");
   process.exit(1);
 }
 
-const pool = new Pool({
-  connectionString,
-  ssl: {
-    rejectUnauthorized: false, // needed for most cloud Postgres providers
-  },
-});
+// Allow override of max connections with env (use small value locally)
+const MAX_POOL = Number(process.env.PG_MAX_POOL || 5);
+const CONNECTION_TIMEOUT_MS = Number(process.env.PG_CONN_TIMEOUT_MS || 30000); // 30s
+const IDLE_TIMEOUT_MS = Number(process.env.PG_IDLE_TIMEOUT_MS || 30000); // 30s
 
-// Helper to run queries
+if (!global.__pgPool) {
+  global.__pgPool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+    max: MAX_POOL,
+    idleTimeoutMillis: IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+    // keepAlive is passed through Node's socket; pg supports it via this option
+    // (some pg versions accept it; it helps prevent intermediate TCP timeouts)
+    keepAlive: true,
+  });
+
+  global.__pgPool.on("connect", () => {
+    console.log("✅ PostgreSQL pool connected");
+  });
+
+  global.__pgPool.on("acquire", () => {
+    console.log("ℹ️  PostgreSQL client acquired");
+  });
+
+  global.__pgPool.on("remove", () => {
+    console.log("ℹ️  PostgreSQL client removed");
+  });
+
+  global.__pgPool.on("error", (err) => {
+    console.error("❌ PostgreSQL pool error:", err && err.message, err);
+  });
+}
+
+const pool = global.__pgPool;
+
+// low-level query wrapper
+async function query(text, params = []) {
+  try {
+    return (await pool.query(text, params));
+  } catch (err) {
+    // If transient network error, try once more quickly
+    const transientCodes = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED"];
+    if (transientCodes.includes(err.code) || (err.message && /timeout|connection reset/i.test(err.message))) {
+      console.warn("⚠️ transient DB error, retrying once:", err.message || err.code);
+      try {
+        return (await pool.query(text, params));
+      } catch (err2) {
+        console.error("❌ DB retry failed:", err2 && err2.message);
+        throw err2;
+      }
+    }
+    throw err;
+  }
+}
+
+// sqlite-style helpers used by your services
+async function all(sql, params = []) {
+  const res = await query(sql, params);
+  return res.rows;
+}
+
+async function get(sql, params = []) {
+  const res = await query(sql, params);
+  return res.rows[0] || null;
+}
+
 module.exports = {
-  query: (text, params) => pool.query(text, params),
+  query,
+  all,
+  get,
+  // export pool for advanced usage elsewhere if needed
+  __rawPool: pool,
 };
